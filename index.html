@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Trell-ish — Projects & Task Board</title>
+<meta name="description" content="A lightweight Trello-style app with projects, tasks, notes, and a global task board. Single-file, works offline via localStorage." />
+<link rel="icon" href="favicon.svg">
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #111827;
+    --muted: #94a3b8;
+    --text: #e5e7eb;
+    --accent: #60a5fa;
+    --accent2: #a78bfa;
+    --card: #1f2937;
+    --card2: #0b1220;
+    --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Ubuntu, Cantarell, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji", "Segoe UI Symbol"; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { position: sticky; top: 0; z-index: 10; background: linear-gradient(180deg, rgba(17,24,39,1) 0%, rgba(17,24,39,0.85) 100%); border-bottom: 1px solid var(--border); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  .brand { font-weight: 700; letter-spacing: 0.3px; }
+  .chip { padding: 4px 10px; border-radius: 999px; font-size: 12px; background: #111827; border: 1px solid var(--border); color: var(--muted); }
+  .btn { background: var(--accent); border: none; color: #0b1220; padding: 10px 14px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+  .btn.secondary { background: #0b1220; color: var(--text); border: 1px solid var(--border); }
+  .input, select, textarea { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 10px; outline: none; width: 100%; }
+  textarea { min-height: 90px; }
+  .panel { background: linear-gradient(180deg, rgba(31,41,55,0.9), rgba(15,23,42,0.9)); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+  .twocol { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
+  @media (max-width: 900px) { .twocol { grid-template-columns: 1fr; } }
+  .list { display: grid; gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .muted { color: var(--muted); }
+  .spacer { height: 12px; }
+  .h1 { font-size: 22px; font-weight: 800; letter-spacing: .2px; }
+  .h2 { font-size: 16px; font-weight: 800; letter-spacing: .2px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .grid-3 { grid-template-columns: 1fr; } }
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 900px) { .board { grid-template-columns: 1fr; } }
+  .col { background: var(--card2); border: 1px solid var(--border); border-radius: 14px; padding: 10px; min-height: 200px; }
+  .col h3 { margin: 6px 6px 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+  .task { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: var(--panel); margin: 8px; }
+  .task .title { font-weight: 700; }
+  .task .meta { font-size: 12px; color: var(--muted); margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .pill { padding: 6px 10px; border-radius: 999px; background: #0b1220; border: 1px solid var(--border); color: var(--text); }
+  .draghint { text-align: center; color: var(--muted); font-size: 12px; padding-bottom: 8px; }
+  .notes { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px; min-height: 160px; }
+  .notes[contenteditable="true"]:focus { outline: 2px solid var(--accent2); }
+  .right { text-align: right; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="wrap row">
+      <div class="brand">🗂️ Trell-ish</div>
+      <div class="grow"></div>
+      <a href="#/projects" class="pill">Projects</a>
+      <a href="#/board" class="pill">All Tasks</a>
+      <button id="exportBtn" class="btn secondary">Export</button>
+      <label class="pill" style="cursor:pointer;">
+        Import <input id="importInput" type="file" accept="application/json" style="display:none;">
+      </label>
+    </div>
+  </header>
+
+  <main class="wrap" id="app"></main>
+
+<script>
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+const store = {
+  key: "trellish_v1",
+  read() {
+    try {
+      const raw = localStorage.getItem(this.key);
+      return raw ? JSON.parse(raw) : { projects: [], tasks: [] };
+    } catch (e) {
+      console.warn("Bad storage, resetting", e);
+      return { projects: [], tasks: [] };
+    }
+  },
+  write(data) { localStorage.setItem(this.key, JSON.stringify(data)); },
+  export() { return JSON.stringify(this.read(), null, 2); },
+  import(json) { this.write(JSON.parse(json)); }
+};
+
+let state = store.read();
+
+const routes = {
+  "/projects": renderProjects,
+  "/project": renderProjectDetail,
+  "/board": renderBoard
+};
+
+function router() {
+  const hash = location.hash || "#/projects";
+  const [_, route, id] = hash.split("/");
+  const key = "/" + route;
+  (routes[key] || renderProjects)(id);
+}
+window.addEventListener("hashchange", router);
+
+const app = document.getElementById("app");
+function h(html) { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstElementChild; }
+function clear(el){ while(el.firstChild) el.removeChild(el.firstChild); }
+function saveAndRerender(cb) { if (typeof cb === "function") cb(); store.write(state); router(); }
+function projectById(id) { return state.projects.find(p => p.id === id); }
+function tasksByProject(id) { return state.tasks.filter(t => t.projectId === id); }
+
+function renderProjects() {
+  clear(app);
+  const counts = state.tasks.reduce((acc,t)=>(acc[t.status]=(acc[t.status]||0)+1,acc),{});
+  const header = h(`<div class="row" style="margin:14px 0 10px"><div class="h1">Projects</div><div class="grow"></div><button class="btn" id="newProjectBtn">+ New Project</button></div>`);
+  app.appendChild(header);
+  const meta = h(`<div class="row muted" style="margin-bottom:12px;"><span class="chip">Total: ${state.projects.length} projects</span><span class="chip">Tasks — To-Do: ${counts.todo||0} · Doing: ${counts.doing||0} · Done: ${counts.done||0}</span></div>`);
+  app.appendChild(meta);
+  const list = h(`<div class="grid-3" id="projectCards"></div>`);
+  state.projects.forEach(p => list.appendChild(projectCard(p)));
+  app.appendChild(list);
+  document.getElementById("newProjectBtn").onclick = () => {
+    const name = prompt("Project name"); if (!name || !name.trim()) return;
+    const p = { id: uid(), name: name.trim(), createdAt: Date.now(), notes: "" };
+    saveAndRerender(() => state.projects.push(p));
+  };
+}
+
+function projectCard(p){
+  const c = state.tasks.reduce((acc,t)=> (t.projectId===p.id ? (acc[t.status]=(acc[t.status]||0)+1,acc):acc), {});
+  const card = h(`<div class="card"><div class="row"><a class="h2" href="#/project/${p.id}">${escapeHtml(p.name)}</a><div class="grow"></div><button class="btn secondary small edit">Rename</button><button class="btn bad small del">Delete</button></div><div class="spacer"></div><div class="muted">Created ${new Date(p.createdAt).toLocaleString()}</div><div class="spacer"></div><div class="row"><span class="badge">To-Do: ${c.todo||0}</span><span class="badge">Doing: ${c.doing||0}</span><span class="badge">Done: ${c.done||0}</span><div class="grow"></div><a class="pill" href="#/project/${p.id}">Open →</a></div></div>`);
+  card.querySelector(".edit").onclick = () => { const name = prompt("Rename project", p.name); if (name && name.trim()) saveAndRerender(() => p.name = name.trim()); };
+  card.querySelector(".del").onclick = () => { if (!confirm("Delete project and its tasks?")) return; saveAndRerender(() => { state.tasks = state.tasks.filter(t => t.projectId !== p.id); state.projects = state.projects.filter(x => x.id !== p.id); }); };
+  return card;
+}
+
+function renderProjectDetail(id) {
+  const proj = projectById(id); if (!proj) { location.hash = "#/projects"; return; }
+  clear(app);
+  const header = h(`<div class="row" style="margin:14px 0 10px"><a class="pill" href="#/projects">← Back</a><div class="h1">${escapeHtml(proj.name)}</div><div class="grow"></div><button class="btn secondary" id="renameBtn">Rename</button><button class="btn bad" id="deleteBtn">Delete</button></div>`);
+  app.appendChild(header);
+  const layout = h(`<div class="twocol"></div>`), left = h(`<div class="panel"></div>`), right = h(`<div class="panel"></div>`); layout.appendChild(left); layout.appendChild(right); app.appendChild(layout);
+  const form = h(`<div class="card"><div class="row"><div class="h2">Add Task</div></div><div class="spacer"></div><div class="row" style="gap:8px;"><input class="input" id="tTitle" placeholder="Title" /><select id="tStatus"><option value="todo">To-Do</option><option value="doing">Doing</option><option value="done">Done</option></select></div><div class="spacer"></div><textarea id="tDesc" placeholder="Optional description"></textarea><div class="spacer"></div><div class="row" style="gap:8px;"><input class="input" id="tDue" type="date" /><select id="tPriority"><option value="">Priority (optional)</option><option value="low">Low</option><option value="med">Medium</option><option value="high">High</option></select><div class="grow"></div><button class="btn" id="addTaskBtn">Add</button></div></div>`);
+  left.appendChild(form);
+  const list = h(`<div class="list" id="projTaskList"></div>`); left.appendChild(list);
+  function renderProjectTasks(){ list.innerHTML = ""; const items = tasksByProject(proj.id).sort((a,b)=> a.createdAt - b.createdAt); if (!items.length) list.appendChild(h(`<div class="muted">No tasks yet.</div>`)); items.forEach(t => list.appendChild(taskRow(t))); } renderProjectTasks();
+  function taskRow(t){ const el = h(`<div class="card"><div class="row"><div class="h2">${escapeHtml(t.title)}</div><div class="grow"></div><select class="pill st"><option value="todo"${t.status==="todo"?" selected":""}>To-Do</option><option value="doing"${t.status==="doing"?" selected":""}>Doing</option><option value="done"${t.status==="done"?" selected":""}>Done</option></select><button class="btn secondary small edit">Edit</button><button class="btn bad small del">Delete</button></div>${t.description ? `<div class="spacer"></div><div class="muted">${nl2br(escapeHtml(t.description))}</div>` : ""}<div class="spacer"></div><div class="row muted">${t.priority ? `<span class="badge">Priority: ${t.priority}</span>`:""}${t.due ? `<span class="badge">Due: ${t.due}</span>`:""}<span class="grow"></span><span class="chip">${new Date(t.createdAt).toLocaleString()}</span></div></div>`); el.querySelector(".st").onchange = (e)=> saveAndRerender(()=> t.status = e.target.value); el.querySelector(".edit").onclick = () => editTask(t); el.querySelector(".del").onclick = () => { if (!confirm("Delete task?")) return; saveAndRerender(()=> state.tasks = state.tasks.filter(x=>x.id!==t.id)); }; return el; }
+  right.innerHTML = `<div class="h2">Project Notes</div><div class="spacer"></div><div id="notes" class="notes" contenteditable="true" spellcheck="true" placeholder="Type notes here..."></div><div class="spacer"></div><div class="right"><button id="saveNotes" class="btn">Save Notes</button></div><div class="spacer"></div><div class="muted">Tips: notes accept plain text. Use Export/Import in the header to back up or sync to another device.</div>`;
+  const notes = document.getElementById("notes"); notes.innerText = proj.notes || "";
+  document.getElementById("saveNotes").onclick = ()=> saveAndRerender(()=> proj.notes = notes.innerText);
+  document.getElementById("addTaskBtn").onclick = () => { const title = document.getElementById("tTitle").value.trim(); if (!title) return alert("Title required"); const t = { id: uid(), projectId: proj.id, title, description: document.getElementById("tDesc").value.trim(), status: document.getElementById("tStatus").value, due: document.getElementById("tDue").value || "", priority: document.getElementById("tPriority").value || "", createdAt: Date.now() }; saveAndRerender(()=> state.tasks.push(t)); };
+  document.getElementById("renameBtn").onclick = () => { const name = prompt("Rename project", proj.name); if (name && name.trim()) saveAndRerender(() => proj.name = name.trim()); };
+  document.getElementById("deleteBtn").onclick = () => { if (!confirm("Delete project and its tasks?")) return; saveAndRerender(() => { state.tasks = state.tasks.filter(t => t.projectId !== proj.id); state.projects = state.projects.filter(p => p.id !== proj.id); location.hash = "#/projects"; }); };
+}
+
+function renderBoard() {
+  clear(app);
+  const header = h(`<div class="row" style="margin:14px 0 10px"><div class="h1">All Tasks</div><div class="grow"></div><select id="projectFilter" class="pill"><option value="">All projects</option>${state.projects.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}</select><input id="search" class="pill" placeholder="Search…" /></div>`);
+  app.appendChild(header);
+  const hint = h(`<div class="draghint">Drag cards between columns to update status.</div>`); app.appendChild(hint);
+  const board = h(`<div class="board"></div>`); app.appendChild(board);
+  const cols = [{ key: "todo", title: "To-Do" },{ key: "doing", title: "Doing" },{ key: "done", title: "Done" }];
+  const filterSel = header.querySelector("#projectFilter"); const searchInput = header.querySelector("#search");
+  function renderColumns(){
+    board.innerHTML = "";
+    cols.forEach(c => { const col = h(`<div class="col" data-status="${c.key}"><h3>${c.title}</h3></div>`); col.ondragover = (e)=> e.preventDefault(); col.ondrop = (e)=>{ e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); const t = state.tasks.find(x=>x.id===id); if (t) saveAndRerender(()=> t.status = c.key); }; board.appendChild(col); });
+    const projFilter = filterSel.value; const q = searchInput.value.trim().toLowerCase();
+    state.tasks.filter(t => !projFilter || t.projectId === projFilter).filter(t => !q || (t.title.toLowerCase().includes(q) || (t.description||"").toLowerCase().includes(q))).forEach(t => {
+      const card = h(`<div class="task" draggable="true"><div class="title">${escapeHtml(t.title)}</div>${t.description ? `<div class="muted">${escapeHtml(t.description).slice(0,120)}${t.description.length>120?"…":""}</div>`:""}<div class="meta"><span class="badge">${escapeHtml(projectById(t.projectId)?.name || "Unknown")}</span>${t.priority ? `<span class="badge">P: ${t.priority}</span>`:""}${t.due ? `<span class="badge">Due: ${t.due}</span>`:""}</div><div class="row" style="margin-top:8px;"><div class="grow"></div><button class="btn secondary small edit">Edit</button><button class="btn bad small del">Delete</button></div></div>`);
+      card.dataset.id = t.id; card.ondragstart = (e)=> { e.dataTransfer.setData("text/plain", t.id); };
+      card.querySelector(".edit").onclick = ()=> editTask(t);
+      card.querySelector(".del").onclick = ()=> { if (!confirm("Delete task?")) return; saveAndRerender(()=> state.tasks = state.tasks.filter(x=>x.id!==t.id)); };
+      const targetCol = board.querySelector(`.col[data-status="${t.status}"]`); targetCol.appendChild(card);
+    });
+  }
+  filterSel.onchange = renderColumns; searchInput.oninput = renderColumns; renderColumns();
+}
+
+function editTask(t){
+  const newTitle = prompt("Edit title", t.title); if (!newTitle || !newTitle.trim()) return;
+  const newDesc = prompt("Edit description (optional)", t.description || "");
+  const newStatus = prompt("Status: todo / doing / done", t.status);
+  const allowed = ["todo","doing","done"]; if (!allowed.includes((newStatus||"").toLowerCase())) return alert("Invalid status");
+  saveAndRerender(()=> { t.title = newTitle.trim(); t.description = (newDesc||"").trim(); t.status = newStatus.toLowerCase(); });
+}
+
+document.getElementById("exportBtn").onclick = () => {
+  const blob = new Blob([store.export()], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = "trellish-export.json"; a.click(); URL.revokeObjectURL(url);
+};
+
+document.getElementById("importInput").onchange = async (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  const text = await file.text();
+  try { store.import(text); state = store.read(); alert("Import complete."); router(); } catch(err) { alert("Import failed: " + err.message); }
+};
+
+function escapeHtml(str) { return (str || "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",""":"&quot;","'":"&#39;" }[m])); }
+function nl2br(str) { return (str||"").replace(/\n/g,"<br>"); }
+
+(function seed(){
+  if (state.projects.length) return;
+  const p1 = { id: uid(), name: "Emergency Ward", createdAt: Date.now(), notes: "Vitals, rounds, discharges." };
+  const p2 = { id: uid(), name: "Content Plan", createdAt: Date.now(), notes: "Reels, carousels, scripts." };
+  state.projects.push(p1, p2);
+  state.tasks.push(
+    { id: uid(), projectId: p1.id, title: "Admit patient in bed 12", description: "Rule out sepsis, start fluids", status: "todo", priority: "high", due: "", createdAt: Date.now() },
+    { id: uid(), projectId: p1.id, title: "Review labs", description: "", status: "doing", priority: "med", due: "", createdAt: Date.now() },
+    { id: uid(), projectId: p2.id, title: "Script: Sleep & Night Shifts", description: "60s reel outline", status: "todo", priority: "low", due: "", createdAt: Date.now() },
+    { id: uid(), projectId: p2.id, title: "Record 3 clips", description: "", status: "done", priority: "", due: "", createdAt: Date.now() }
+  );
+  store.write(state);
+})();
+
+router();
+</script>
+</body>
+</html>
